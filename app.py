@@ -10,6 +10,12 @@ from typing import List, Dict, Any, Optional
 
 import streamlit as st
 
+# Optional: für Webhook
+try:
+    import requests  # in requirements.txt enthalten
+except Exception:
+    requests = None
+
 # ----------------------------
 # Basiskonfiguration & Branding
 # ----------------------------
@@ -210,6 +216,32 @@ def save_to_csv(row: Dict[str, Any], path: str = CSV_PATH) -> None:
             writer.writeheader()
         writer.writerow(row)
 
+def post_to_make(payload: Dict[str, Any]) -> tuple[bool, str]:
+    """Sendet das Payload an den (optional) konfigurierten Make-Webhook."""
+    # 1) secrets.toml: make_webhook = "https://hook...."
+    webhook = None
+    try:
+        webhook = st.secrets.get("make_webhook")  # type: ignore[attr-defined]
+    except Exception:
+        webhook = None
+    # 2) oder Env-Variable
+    if not webhook:
+        webhook = os.environ.get("MAKE_WEBHOOK_URL", "")
+
+    if not webhook:
+        return (False, "Kein Webhook konfiguriert (st.secrets['make_webhook'] oder env MAKE_WEBHOOK_URL).")
+
+    if requests is None:
+        return (False, "requests nicht verfügbar (prüfe requirements).")
+
+    try:
+        r = requests.post(webhook, json=payload, timeout=6)
+        if 200 <= r.status_code < 300:
+            return (True, "An Make übermittelt.")
+        return (False, f"Make-Status {r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        return (False, f"Fehler beim Webhook: {e}")
+
 def compile_payload() -> Dict[str, Any]:
     ended_at = time.time()
     duration_sec = int(ended_at - st.session_state.started_at)
@@ -314,8 +346,23 @@ if idx == num_q - 1:
 
     if st.button("Antworten absenden", type="primary", disabled=not consent):
         row = compile_payload()
+
+        # 1) lokal sichern
         save_to_csv(row)
-        st.success("Vielen Dank! Ihre Antworten wurden gespeichert.")
+        csv_ok = True
+
+        # 2) optional an Make senden
+        make_ok, make_msg = post_to_make(row)
+
+        if csv_ok and make_ok:
+            st.success("Vielen Dank! Ihre Antworten wurden gespeichert **und** übermittelt.")
+        elif csv_ok and not make_ok:
+            st.warning(f"Ihre Antworten wurden lokal gespeichert. Hinweis zur Übermittlung: {make_msg}")
+        elif not csv_ok and make_ok:
+            st.warning("Übermittlung ok, aber lokale Speicherung ist fehlgeschlagen.")
+        else:
+            st.error("Weder Speicherung noch Übermittlung war erfolgreich. Bitte später erneut versuchen.")
+
         st.balloons()
         st.session_state.idx = 0
         st.session_state.answers = {}
