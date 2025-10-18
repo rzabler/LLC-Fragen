@@ -1,6 +1,6 @@
 # app.py — Professionelle, thematisch gegliederte Umfrage (Streamlit)
 # --------------------------------------------------------------
-# Build: v2025-10-17-03
+# Build: v2025-10-18-02
 
 import os
 import csv
@@ -12,7 +12,7 @@ import streamlit as st
 
 # Optional: für Webhook
 try:
-    import requests  # in requirements.txt enthalten
+    import requests
 except Exception:
     requests = None
 
@@ -28,7 +28,7 @@ FOOTER_IMPRINT = os.environ.get(
     "Diese Demo dient der strukturierten Konzepterhebung (Uni-/Kundenprojekt). Bitte keine unnötigen personenbezogenen Daten angeben.",
 )
 CSV_PATH = os.environ.get("SURVEY_CSV_PATH", "responses.csv")
-BUILD_ID = "v2025-10-17-03"
+BUILD_ID = "v2025-10-18-02"
 
 if LOGO_URL:
     st.image(LOGO_URL, width=160)
@@ -113,13 +113,21 @@ QUESTIONS: List[Dict[str, Any]] = [
     {"type": "section", "title": "3) Reporting-Typ & Dokumente"},
     {
         "id": "bericht_typ",
-        "text": "Bevorzugen Sie **Vorstandsbericht (Management Report)** oder **Benutzerhandbuch (MIS-Guide)**?",
+        "text": "Bevorzugen Sie, dass das Reporting als **Vorstandsbericht (Management Report)** oder als **Benutzerhandbuch (MIS-Guide)** umgesetzt wird?",
         "options": ["Vorstandsbericht", "Benutzerhandbuch", "Beides (kompakt)", "Keine Angabe"],
     },
     {
         "id": "bericht_details",
-        "text": "Was verstehen Sie **konkret** unter einem Vorstandsbericht (Management Report)? Und welche **Details** erwarten Sie in einem Benutzerhandbuch (MIS-Guide)?",
-        "comment_ph": "Bitte Erwartungen an Inhalt/Tiefe skizzieren",
+        "text": "Was verstehen Sie **konkret** unter einem Vorstandsbericht und welche **Details** erwarten Sie in einem Benutzerhandbuch?",
+        "options": [
+            "Management-Zusammenfassung mit Handlungsempfehlungen",
+            "Kennzahlenorientiert (KPIs mit Abweichungen/Trends)",
+            "Storyline-orientiert (Regionen/Produkte/Plan-Ist/Forecast)",
+            "Kompakt (max. 2–3 Seiten) + Anhang",
+            "Detailliert (inkl. Methodik & Definitionen)",
+            "Noch unklar / Bitte Vorschlag",
+        ],
+        "comment_ph": "Optional konkretisieren (Prioritäten, Beispiele)",
     },
     {
         "id": "guide_inhalt",
@@ -136,7 +144,7 @@ QUESTIONS: List[Dict[str, Any]] = [
     {
         "id": "vdt_mehrwert",
         "text": "Wo sehen Sie den größten **Mehrwert** eines **Value Driver Trees**?",
-        "options": ["Management Overview", "Produktanalyse", "Plan/Forecast (Simulation)", "Übergreifend", "Keine Angabe"],
+        "options": ["Management Overview", "Produkt-/Länderebene", "Plan/Forecast (Simulation)", "Übergreifend", "Keine Angabe"],
     },
     {
         "id": "ist_daten",
@@ -163,13 +171,19 @@ QUESTIONS: List[Dict[str, Any]] = [
     {"type": "section", "title": "5) Regressionsmodell & Marketing-Lag"},
     {
         "id": "regression_info",
-        "text": "Sollen wir ein **Regressionsmodell** im Reporting berücksichtigen? Hintergrund: Die **einzige beeinflussbare Variable** ist aktuell das **Marketing**; es zeigt einen **1-Jahres-Lag** (~+1,4 pro Marketing-Einheit auf den Umsatz im Folgejahr).",
+        "text": "Sollen wir ein **Regressionsmodell** im Reporting berücksichtigen? Wichtigster beeinflussbarer Treiber ist das **Marketing** mit einem **1-Jahres-Lag** (Erhöhung des Marketingbudgets wirkt sich primär im **Folgejahr** auf den Umsatz aus; Richtwert aus Modell: ~+1,4 pro Einheit).",
         "options": ["Ja", "Nein", "Keine Angabe"],
     },
     {
         "id": "regression_integration",
-        "text": "Wie möchten Sie die **Integration** der Marketing-Lag-Logik sehen?",
-        "options": ["Schieberegler (Marketing-Budget)", "Szenario-Buttons (Low/Med/High)", "Parameter-Eingabe (Expertenmodus)", "Noch unklar", "Keine Angabe"],
+        "text": "Wie möchten Sie die **Integration** der Marketing-Lag-Logik (Wirkung im **Folgejahr**) sehen?",
+        "options": [
+            "Schieberegler (Marketing-Budget)",
+            "Szenario-Buttons (Low/Medium/High)",
+            "Parameter-Eingabe (Expertenmodus)",
+            "Noch unklar",
+            "Keine Angabe",
+        ],
     },
 
     {"type": "section", "title": "6) Sonstiges"},
@@ -192,9 +206,9 @@ if isinstance(qp, dict):
 # Session State
 # ----------------------------
 if "idx" not in st.session_state:
-    st.session_state.idx = 0  # Index über Fragen (Sections werden übersprungen)
+    st.session_state.idx = 0
 if "answers" not in st.session_state:
-    st.session_state.answers = {}  # {question_id: {"choice": str, "comment": str}}
+    st.session_state.answers = {}
 if "started_at" not in st.session_state:
     st.session_state.started_at = time.time()
 
@@ -217,23 +231,17 @@ def save_to_csv(row: Dict[str, Any], path: str = CSV_PATH) -> None:
         writer.writerow(row)
 
 def post_to_make(payload: Dict[str, Any]) -> tuple[bool, str]:
-    """Sendet das Payload an den (optional) konfigurierten Make-Webhook."""
-    # 1) secrets.toml: make_webhook = "https://hook...."
     webhook = None
     try:
         webhook = st.secrets.get("make_webhook")  # type: ignore[attr-defined]
     except Exception:
         webhook = None
-    # 2) oder Env-Variable
     if not webhook:
         webhook = os.environ.get("MAKE_WEBHOOK_URL", "")
-
     if not webhook:
         return (False, "Kein Webhook konfiguriert (st.secrets['make_webhook'] oder env MAKE_WEBHOOK_URL).")
-
     if requests is None:
         return (False, "requests nicht verfügbar (prüfe requirements).")
-
     try:
         r = requests.post(webhook, json=payload, timeout=6)
         if 200 <= r.status_code < 300:
@@ -348,8 +356,11 @@ if idx == num_q - 1:
         row = compile_payload()
 
         # 1) lokal sichern
-        save_to_csv(row)
-        csv_ok = True
+        try:
+            save_to_csv(row)
+            csv_ok = True
+        except Exception as e:
+            csv_ok = False
 
         # 2) optional an Make senden
         make_ok, make_msg = post_to_make(row)
